@@ -1,62 +1,49 @@
 package waitNotifyThread;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.Scanner;
 import java.util.StringJoiner;
 
 public class Main {
-    private static final String INPUT_FILE = "./waitNotifyThread/matrices.txt";
-    private static final String OUTPUT_FILE = "./waitNotifyThread/matrices_results.txt";
     private static final int N = 10;
-
+    private static final String FILE_PATH = "./waitNotifyThread/matrices.txt";
+    private static final String OUTPUT_FILE = "./waitNotifyThread/matrices_results.txt";
     public static void main(String[] args) throws IOException {
-        ThreadSafeQueue threadSafeQueue = new ThreadSafeQueue();
-        File inputFile = new File(INPUT_FILE);
+        ThreadSafeQueue queue = new ThreadSafeQueue();
+        File inputFile = new File(FILE_PATH);
         File outputFile = new File(OUTPUT_FILE);
+        MatricesReaderProducer matrixProducer = new MatricesReaderProducer(new FileReader(inputFile), queue);
+        MatricesMultiplierConsumer matrixConsumer = new MatricesMultiplierConsumer(new FileWriter(outputFile), queue);
 
-        MatricesReaderProducer matricesReader = new MatricesReaderProducer(new FileReader(inputFile), threadSafeQueue);
-        MatricesMultiplierConsumer matricesConsumer = new MatricesMultiplierConsumer(new FileWriter(outputFile), threadSafeQueue);
-
-        matricesConsumer.start();
-        matricesReader.start();
+        matrixProducer.start();
+        matrixConsumer.start();
     }
 
     private static class MatricesMultiplierConsumer extends Thread {
-        private ThreadSafeQueue queue;
         private FileWriter fileWriter;
+        private ThreadSafeQueue queue;
 
         public MatricesMultiplierConsumer(FileWriter fileWriter, ThreadSafeQueue queue) {
             this.fileWriter = fileWriter;
             this.queue = queue;
         }
 
-        private static void saveMatrixToFile(FileWriter fileWriter, float[][] matrix) throws IOException {
-            for (int r = 0; r < N; r++) {
-                StringJoiner stringJoiner = new StringJoiner(", ");
-                for (int c = 0; c < N; c++) {
-                    stringJoiner.add(String.format("%.2f", matrix[r][c]));
-                }
-                fileWriter.write(stringJoiner.toString());
-                fileWriter.write('\n');
-            }
-            fileWriter.write('\n');
-        }
-
         @Override
         public void run() {
-            while (true) {
+            while(true) {
                 MatricesPair matricesPair = queue.remove();
                 if (matricesPair == null) {
-                    System.out.println("No more matrices to read from the queue, consumer is terminating");
+                    System.out.println("No more matrices, consumer is terminating");
                     break;
                 }
-
                 float[][] result = multiplyMatrices(matricesPair.matrix1, matricesPair.matrix2);
-
                 try {
-                    saveMatrixToFile(fileWriter, result);
+                    saveMatrixToFile(result);
                 } catch (IOException e) {
                 }
             }
@@ -64,21 +51,30 @@ public class Main {
             try {
                 fileWriter.flush();
                 fileWriter.close();
-            } catch (IOException e) {
-                e.printStackTrace();
+            } catch(IOException e) {}
+        }
+
+        private void saveMatrixToFile(float[][] matrix) throws IOException {
+            for (int i = 0; i < N; i++) {
+                StringJoiner str = new StringJoiner(", ");
+                for (int j = 0; j < N; j++) {
+                    str.add(String.format("%.2f", matrix[i][j]));
+                }
+                fileWriter.write(str.toString());
+                fileWriter.write('\n');
             }
         }
 
         private float[][] multiplyMatrices(float[][] m1, float[][] m2) {
-            float[][] result = new float[N][N];
-            for (int r = 0; r < N; r++) {
-                for (int c = 0; c < N; c++) {
+            float[][] r = new float[N][N];
+            for (int i = 0; i < N; i++) {
+                for (int j = 0; j < N; j++) {
                     for (int k = 0; k < N; k++) {
-                        result[r][c] += m1[r][k] * m2[k][c];
+                        r[i][j] += (m1[i][k] * m2[k][j]);
                     }
                 }
             }
-            return result;
+            return r;
         }
     }
 
@@ -86,22 +82,21 @@ public class Main {
         private Scanner scanner;
         private ThreadSafeQueue queue;
 
-        public MatricesReaderProducer(FileReader reader, ThreadSafeQueue queue) {
-            this.scanner = new Scanner(reader);
+        public MatricesReaderProducer(FileReader fileReader, ThreadSafeQueue queue) {
+            this.scanner = new Scanner(fileReader);
             this.queue = queue;
         }
 
         @Override
         public void run() {
-            while (true) {
+            while(true) {
                 float[][] matrix1 = readMatrix();
                 float[][] matrix2 = readMatrix();
                 if (matrix1 == null || matrix2 == null) {
                     queue.terminate();
-                    System.out.println("No more matrices to read. Producer Thread is terminating");
+                    System.out.println("No more matrix");
                     return;
                 }
-
                 MatricesPair matricesPair = new MatricesPair();
                 matricesPair.matrix1 = matrix1;
                 matricesPair.matrix2 = matrix2;
@@ -110,15 +105,15 @@ public class Main {
             }
         }
 
-        private float[][] readMatrix() {
+        public float[][] readMatrix() {
             float[][] matrix = new float[N][N];
-            for (int r = 0; r < N; r++) {
+            for (int i = 0; i < N; i++) {
                 if (!scanner.hasNext()) {
                     return null;
                 }
                 String[] line = scanner.nextLine().split(",");
-                for (int c = 0; c < N; c++) {
-                    matrix[r][c] = Float.valueOf(line[c]);
+                for (int j = 0; j < N; j++) {
+                    matrix[i][j] = Float.valueOf(line[j]);
                 }
             }
             scanner.nextLine();
@@ -129,49 +124,36 @@ public class Main {
     private static class ThreadSafeQueue {
         private Queue<MatricesPair> queue = new LinkedList<>();
         private boolean isEmpty = true;
-        private boolean isTerminate = false;
-        private static final int CAPACITY = 5;
+        private boolean isTerminated = false;
 
         public synchronized void add(MatricesPair matricesPair) {
-            while (queue.size() == CAPACITY) {
-                try {
-                    wait();
-                } catch (InterruptedException e) {
-                }
-            }
             queue.add(matricesPair);
-            isEmpty = false;
+            if (isEmpty) {
+                isEmpty = false;
+            }
             notify();
         }
 
         public synchronized MatricesPair remove() {
-            MatricesPair matricesPair = null;
-            while (isEmpty && !isTerminate) {
+            while(isEmpty && !isTerminated) {
                 try {
-                    wait();
-                } catch (InterruptedException e) {
+                    wait();    
+                } catch(InterruptedException e) {
+
                 }
             }
-
             if (queue.size() == 1) {
                 isEmpty = true;
             }
-
-            if (queue.size() == 0 && isTerminate) {
+            if (queue.size() == 0 && isTerminated) {
                 return null;
             }
-
-            System.out.println("queue size " + queue.size());
-
-            matricesPair = queue.remove();
-            if (queue.size() == CAPACITY - 1) {
-                notifyAll();
-            }
-            return matricesPair;
+            System.out.println("Queue size " + queue.size());
+            return queue.remove();
         }
 
         public synchronized void terminate() {
-            isTerminate = true;
+            isTerminated = true;
             notifyAll();
         }
     }
@@ -181,4 +163,3 @@ public class Main {
         public float[][] matrix2;
     }
 }
- 
