@@ -125,8 +125,15 @@ public class Main {
         private Queue<MatricesPair> queue = new LinkedList<>();
         private boolean isEmpty = true;
         private boolean isTerminated = false;
+        private final int MAX_CAP = 5;
 
         public synchronized void add(MatricesPair matricesPair) {
+            while (queue.size() == MAX_CAP) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                }
+            }
             queue.add(matricesPair);
             if (isEmpty) {
                 isEmpty = false;
@@ -135,6 +142,7 @@ public class Main {
         }
 
         public synchronized MatricesPair remove() {
+            MatricesPair matricesPair = null;
             while(isEmpty && !isTerminated) {
                 try {
                     wait();    
@@ -149,7 +157,11 @@ public class Main {
                 return null;
             }
             System.out.println("Queue size " + queue.size());
-            return queue.remove();
+            matricesPair = queue.remove();
+            if (queue.size() == MAX_CAP-1) {
+                notifyAll();
+            }
+            return matricesPair;
         }
 
         public synchronized void terminate() {
